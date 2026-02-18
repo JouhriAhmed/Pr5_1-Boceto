@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Studio</title>
+  <style>
+    body { margin: 0; overflow: hidden; }
+    canvas { display: block; }
+
+    /* زر Home */
+    #homeBtn{
+      position: fixed;
+      top: 16px;
+      left: 16px;
+      z-index: 20;
+      padding: 10px 14px;
+      border-radius: 12px;
+      border: 0;
+      cursor: pointer;
+      font-family: Arial, sans-serif;
+      font-weight: 700;
+      background: rgba(255,255,255,.9);
+    }
+    #introOverlay{
+  position: fixed;
+  inset: 0;
+  background: black;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+}
+
+#enterBtn{
+  width: 140px;
+  height: 140px;
+  border-radius: 50%;
+  border: 2px solid white;
+  background: transparent;
+  color: white;
+  font-size: 20px;
+  letter-spacing: 2px;
+  cursor: pointer;
+  transition: 0.3s;
+}
+
+#enterBtn:hover{
+  background: white;
+  color: black;
+}
+
+  </style>
+</head>
+<body>
+  <!-- ===== ENTER SCREEN ===== -->
+<div id="introOverlay">
+  <button id="enterBtn">ENTER</button>
+</div>
+
+
+  <button id="homeBtn">Home</button>
+
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+      }
+    }
+  </script>
+
+  <script type="module" src="./main.js"></script>
+</body>
+</html>
