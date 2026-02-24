@@ -18,26 +18,35 @@ const OFFSET_Y = 3.65;
 const OFFSET_Z = -0.07;
 
 // =====================
-// ✅✅ ANIMATION SETTINGS (تحكم هنا فقط)
+// SOCIAL LINKS + HOVER STYLE
 // =====================
+const SOCIAL_LINKS = {
+  Instagram: 'https://www.instagram.com/jouhri.1/',
+  Linkedin: 'https://ma.linkedin.com/in/ahmed-jouhri-27427a250', // ✅ تأكد من الاسم مثل Blender
+  whatsapp: 'https://wa.me/+346772277197' // مثال: 2126xxxxxx بدون +
+};
 
-// موضع الاستقرار النهائي (قياساتك)
+const SOCIAL_HOVER = {
+  color: 0xffffff,
+  emissive: 0xffffff,
+  emissiveIntensity: 0.2
+};
+
+// =====================
+// ✅✅ ANIMATION SETTINGS
+// =====================
 const HOME_CAM = new THREE.Vector3(10, 10, 20);
 const HOME_TARGET = new THREE.Vector3(0, 1, 0);
 
-// بداية الانترو (أبعد + "يأتي من العدم")
 const START_CAM = new THREE.Vector3(22, 18, 45);
 const START_SCALE = 0.01;
 
-// مدة الانترو بالثواني
 const INTRO_DURATION = 3.0;
 
-// دوران السينمائي أثناء الانترو (يتغير تدريجياً)
-const INTRO_ROTATE_MIN = 0.2;  // يبدأ ببطء
-const INTRO_ROTATE_MAX = 1.4;  // يصل لأقصى سرعة قبل النهاية
+const INTRO_ROTATE_MIN = 0.2;
+const INTRO_ROTATE_MAX = 1.4;
 
-// دوران خفيف مستمر بعد الانترو (idle)
-const IDLE_ROTATE_SPEED = 0.15; // خفيف جداً (0.08..0.25)
+const IDLE_ROTATE_SPEED = 0.15;
 
 // =====================
 // Scene / Camera
@@ -45,7 +54,6 @@ const IDLE_ROTATE_SPEED = 0.15; // خفيف جداً (0.08..0.25)
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(BG_COLOR);
 
-// world group للـ scale intro
 const world = new THREE.Group();
 scene.add(world);
 
@@ -59,17 +67,16 @@ const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.domElement.style.position = 'absolute';
-renderer.domElement.style.top = '0';
-renderer.domElement.style.left = '0';
+renderer.domElement.style.inset = '0';
 renderer.domElement.style.zIndex = '0';
 document.body.appendChild(renderer.domElement);
 
 const cssRenderer = new CSS3DRenderer();
 cssRenderer.setSize(window.innerWidth, window.innerHeight);
 cssRenderer.domElement.style.position = 'absolute';
-cssRenderer.domElement.style.top = '0';
-cssRenderer.domElement.style.left = '0';
-cssRenderer.domElement.style.zIndex = '10';
+cssRenderer.domElement.style.inset = '0';
+cssRenderer.domElement.style.zIndex = '1';
+// ✅ مهم: لا تلتقط الماوس أبداً على مستوى الـ CSS3D كله
 cssRenderer.domElement.style.pointerEvents = 'none';
 document.body.appendChild(cssRenderer.domElement);
 
@@ -90,12 +97,19 @@ controls.target.copy(HOME_TARGET);
 controls.update();
 
 // =====================
-// Enter screen logic
+// Enter overlay
 // =====================
 const overlay = document.getElementById('introOverlay');
 const enterBtn = document.getElementById('enterBtn');
 
-// نخفي الرندر إلى أن يضغط Enter (اختياري)
+// ✅ ضمان أن overlay فوق كل شيء وقابل للنقر
+if (overlay) {
+  overlay.style.position = 'fixed';
+  overlay.style.inset = '0';
+  overlay.style.zIndex = '9999';
+  overlay.style.pointerEvents = 'auto';
+}
+
 if (overlay && enterBtn) {
   renderer.domElement.style.visibility = 'hidden';
   cssRenderer.domElement.style.visibility = 'hidden';
@@ -106,13 +120,8 @@ if (overlay && enterBtn) {
 // =====================
 let introPlaying = false;
 let introTime = 0;
-
-// idle rotation after intro
 let idleRotate = false;
 
-// =====================
-// Helpers (ease)
-// =====================
 function easeOutCubic(x) {
   return 1 - Math.pow(1 - x, 3);
 }
@@ -124,52 +133,30 @@ function startIntro() {
   introPlaying = true;
   introTime = 0;
 
-  // بداية الكاميرا + الهدف
   camera.position.copy(START_CAM);
   controls.target.copy(HOME_TARGET);
   controls.update();
 
-  // العالم يبدأ صغير
   world.scale.setScalar(START_SCALE);
 
-  // دوران تلقائي أثناء الانترو (سرعته تتغير داخل animate)
   controls.autoRotate = true;
   controls.autoRotateSpeed = INTRO_ROTATE_MIN;
 
-  // نوقف تحكم المستخدم أثناء الانترو
   controls.enabled = false;
-
-  // نوقف idle أثناء الانترو
   idleRotate = false;
 }
 
 // =====================
-// Raycaster
+// Raycaster + mouse
 // =====================
 const raycaster = new THREE.Raycaster();
 const mouse = new THREE.Vector2();
-window.addEventListener('mousemove', (e) => {
-  if (!studio || !pcObject) return;
-  if (pcMode || introPlaying) return; // داخل PC أو أثناء intro لا نعمل hover
 
+function setMouseFromEvent(e) {
   mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
   mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
   raycaster.setFromCamera(mouse, camera);
-
-  const hits = raycaster.intersectObject(pcObject, true);
-  const nowHover = hits.length > 0;
-
-  if (nowHover !== hoverPC) {
-    hoverPC = nowHover;
-
-    // شغل/اطفئ اللمعة
-    if (pcGlow) pcGlow.visible = hoverPC;
-
-    // كيرسر اليد (اختياري)
-    document.body.style.cursor = hoverPC ? 'pointer' : 'default';
-  }
-});
-
+}
 
 // =====================
 // Refs
@@ -177,18 +164,24 @@ window.addEventListener('mousemove', (e) => {
 let studio = null;
 let pcScreen = null;
 let screenCSS = null;
-// =====================
-// Hover highlight (PC glow)
-// =====================
-let pcObject = null;     // Ordenador (or parent group)
-let pcGlow = null;       // glow mesh
-let hoverPC = false;
-
 
 let pcMode = false;
 
+// PC glow
+let pcObject = null; // Ordenador
+let pcGlow = null;
+let hoverPC = false;
+
+// Social
+let socialRoots = [];
+let socialHoverName = null;
+const socialMatBackup = new Map();
+
+// PC Screen DOM ref (عشان نعرف هل النقرة داخل الشاشة)
+let pcDiv = null;
+
 // =====================
-// Smooth camera move (Zoom to PC)
+// Smooth camera move
 // =====================
 let moving = false;
 let moveT = 0;
@@ -208,6 +201,7 @@ function startMove(newCamPos, newTarget, saveState = true) {
 
   moving = true;
   moveT = 0;
+
   camFrom.copy(camera.position);
   tarFrom.copy(controls.target);
   camTo.copy(newCamPos);
@@ -217,16 +211,21 @@ function startMove(newCamPos, newTarget, saveState = true) {
 }
 
 // =====================
-// Create iframe (hidden by default)
+// Create PC Screen (CSS3D)
 // =====================
 function createPCScreen() {
   const div = document.createElement('div');
+  pcDiv = div;
+
   div.style.width = `${IFRAME_W}px`;
   div.style.height = `${IFRAME_H}px`;
   div.style.background = '#111';
   div.style.borderRadius = '12px';
   div.style.overflow = 'hidden';
   div.style.boxSizing = 'border-box';
+
+  // ✅ فقط هذا العنصر يلتقط الماوس (وليس الـ cssRenderer كله)
+  div.style.pointerEvents = 'auto';
 
   const iframe = document.createElement('iframe');
   iframe.src = new URL('./ui/pc/index.html', window.location.href).toString();
@@ -244,8 +243,10 @@ function createPCScreen() {
   return obj;
 }
 
+// =====================
+// PC Glow mesh
+// =====================
 function makeGlowFromMesh(meshOrGroup) {
-  // نأخذ أول Mesh داخل المجموعة
   let baseMesh = null;
   meshOrGroup.traverse((o) => {
     if (!baseMesh && o.isMesh) baseMesh = o;
@@ -255,25 +256,65 @@ function makeGlowFromMesh(meshOrGroup) {
   const glowMat = new THREE.MeshBasicMaterial({
     color: 0xffffff,
     transparent: true,
-    opacity: 0.58,      // قوة اللمعة (0.08 .. 0.35)
+    opacity: 0.58,
     depthWrite: false,
   });
 
   const glow = new THREE.Mesh(baseMesh.geometry.clone(), glowMat);
   glow.position.copy(baseMesh.position);
   glow.rotation.copy(baseMesh.rotation);
-  glow.scale.copy(baseMesh.scale).multiplyScalar(1.0); // سمك الإطار (1.01 .. 1.05)
-
-  // نخلي اللمعة تظهر دائماً فوق المجسم
+  glow.scale.copy(baseMesh.scale).multiplyScalar(1.0);
   glow.renderOrder = 999;
 
-  // لو baseMesh داخل parent، لازم نضيف glow لنفس الـ parent
   baseMesh.parent.add(glow);
-
   glow.visible = false;
   return glow;
 }
 
+// =====================
+// Social hover helpers
+// =====================
+function cacheMaterial(mat) {
+  if (!mat || socialMatBackup.has(mat.uuid)) return;
+  socialMatBackup.set(mat.uuid, {
+    color: mat.color ? mat.color.clone() : null,
+    emissive: mat.emissive ? mat.emissive.clone() : null,
+    emissiveIntensity: mat.emissiveIntensity ?? 0
+  });
+}
+
+function applySocialHoverToObject(obj, isOn) {
+  if (!obj) return;
+
+  obj.traverse((m) => {
+    if (!m.isMesh || !m.material) return;
+
+    const mats = Array.isArray(m.material) ? m.material : [m.material];
+    mats.forEach((mat) => {
+      if (!mat) return;
+
+      cacheMaterial(mat);
+      const saved = socialMatBackup.get(mat.uuid);
+      if (!saved) return;
+
+      if (isOn) {
+        if (mat.color) mat.color.setHex(SOCIAL_HOVER.color);
+        if ('emissive' in mat && mat.emissive) {
+          mat.emissive.setHex(SOCIAL_HOVER.emissive);
+          mat.emissiveIntensity = SOCIAL_HOVER.emissiveIntensity;
+        }
+      } else {
+        if (saved.color && mat.color) mat.color.copy(saved.color);
+        if ('emissive' in mat && mat.emissive && saved.emissive) {
+          mat.emissive.copy(saved.emissive);
+          mat.emissiveIntensity = saved.emissiveIntensity;
+        }
+      }
+
+      mat.needsUpdate = true;
+    });
+  });
+}
 
 // =====================
 // Sync UI to PC_SCREEN
@@ -306,33 +347,29 @@ function syncScreen() {
 }
 
 // =====================
-// Enter/Exit PC mode
+// PC Mode
 // =====================
 function enterPCMode() {
   pcMode = true;
   if (screenCSS) screenCSS.visible = true;
 
-  cssRenderer.domElement.style.pointerEvents = 'auto';
   controls.enabled = false;
-
-  // نوقف الدوران أثناء PC
   controls.autoRotate = false;
   idleRotate = false;
+
+  // ✅ لا لمعة للكمبيوتر أثناء pcMode
+  hoverPC = false;
   if (pcGlow) pcGlow.visible = false;
-document.body.style.cursor = 'default';
 
+  document.body.style.cursor = 'default';
 }
-
 
 function exitPCMode() {
   pcMode = false;
   if (screenCSS) screenCSS.visible = false;
 
-  cssRenderer.domElement.style.pointerEvents = 'none';
-
   startMove(savedCamPos, savedTarget, false);
 
-  // بعد الخروج رجّع idle rotation
   if (!introPlaying) {
     controls.autoRotate = true;
     controls.autoRotateSpeed = IDLE_ROTATE_SPEED;
@@ -354,6 +391,66 @@ window.addEventListener('message', (event) => {
 });
 
 // =====================
+// Hover (mousemove) — PC glow + Social
+// =====================
+window.addEventListener('mousemove', (e) => {
+  if (!studio) return;
+  if (introPlaying) return;
+
+  setMouseFromEvent(e);
+
+  // ---- PC hover (لكن لا تعمل أثناء pcMode)
+  if (!pcMode && pcObject) {
+    const hitsPC = raycaster.intersectObject(pcObject, true);
+    const nowHoverPC = hitsPC.length > 0;
+
+    if (nowHoverPC !== hoverPC) {
+      hoverPC = nowHoverPC;
+      if (pcGlow) pcGlow.visible = hoverPC;
+      document.body.style.cursor = hoverPC ? 'pointer' : 'default';
+    }
+  } else {
+    // أثناء pcMode تأكد أنها مطفأة
+    hoverPC = false;
+    if (pcGlow) pcGlow.visible = false;
+  }
+
+  // ---- Social hover (يعمل حتى أثناء pcMode)
+  if (socialRoots.length) {
+    const socialHits = raycaster.intersectObjects(socialRoots, true);
+
+    let newName = null;
+    if (socialHits.length) {
+      let cur = socialHits[0].object;
+      while (cur) {
+        if (SOCIAL_LINKS[cur.name]) {
+          newName = cur.name;
+          break;
+        }
+        cur = cur.parent;
+      }
+    }
+
+    if (newName !== socialHoverName) {
+      if (socialHoverName) {
+        const oldObj = studio.getObjectByName(socialHoverName);
+        applySocialHoverToObject(oldObj, false);
+      }
+
+      socialHoverName = newName;
+
+      if (socialHoverName) {
+        const newObj = studio.getObjectByName(socialHoverName);
+        applySocialHoverToObject(newObj, true);
+      }
+
+      // Cursor: لا نخرب كيرسر الكمبيوتر
+      if (!hoverPC) document.body.style.cursor = socialHoverName ? 'pointer' : 'default';
+    }
+  }
+});
+
+// =====================
 // Load model
 // =====================
 new GLTFLoader().load(
@@ -363,21 +460,37 @@ new GLTFLoader().load(
     world.add(studio);
 
     pcScreen = studio.getObjectByName('PC_SCREEN');
-    // 🔎 اسم الحاسوب عندك في Blender: Ordenador
-pcObject = studio.getObjectByName('Ordenador');
+    pcObject = studio.getObjectByName('Ordenador');
 
-// إذا اسمك مختلف، غيّر هذا السطر فقط.
-if (pcObject) {
-  pcGlow = makeGlowFromMesh(pcObject);
-  console.log('✅ PC Glow created');
-} else {
-  console.warn('⚠️ لم أجد Ordenador. تأكد من الاسم في Blender.');
-}
+    if (pcObject) {
+      pcGlow = makeGlowFromMesh(pcObject);
+      console.log('✅ PC Glow created');
+    } else {
+      console.warn('⚠️ لم أجد Ordenador. تأكد من الاسم في Blender.');
+    }
 
     if (!pcScreen) {
       console.error('PC_SCREEN غير موجود. تأكد من الاسم في Blender.');
       return;
     }
+
+    // Social objects
+    socialRoots = [];
+    Object.keys(SOCIAL_LINKS).forEach((name) => {
+      const obj = studio.getObjectByName(name);
+      if (!obj) {
+        console.warn(`⚠️ لم أجد عنصر Social باسم: ${name}`);
+        return;
+      }
+      socialRoots.push(obj);
+
+      obj.traverse((m) => {
+        if (!m.isMesh || !m.material) return;
+        const mats = Array.isArray(m.material) ? m.material : [m.material];
+        mats.forEach((mat) => cacheMaterial(mat));
+      });
+    });
+    console.log('✅ Social roots:', socialRoots.map(o => o.name));
 
     screenCSS = createPCScreen();
     scene.add(screenCSS);
@@ -402,18 +515,52 @@ if (overlay && enterBtn) {
 }
 
 // =====================
-// Click -> show UI immediately + Zoom
+// Helper: is click inside PC screen DOM?
+// =====================
+function isClickInsidePCScreen(e) {
+  if (!pcMode) return false;
+  if (!pcDiv) return false;
+  if (!screenCSS || !screenCSS.visible) return false;
+
+  const r = pcDiv.getBoundingClientRect();
+  return (
+    e.clientX >= r.left && e.clientX <= r.right &&
+    e.clientY >= r.top && e.clientY <= r.bottom
+  );
+}
+
+// =====================
+// Click -> Social link OR PC zoom / open UI
 // =====================
 window.addEventListener('click', (e) => {
   if (!studio || !pcScreen) return;
   if (moving) return;
-  if (pcMode) return;
   if (introPlaying) return;
 
-  mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
-  mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
-  raycaster.setFromCamera(mouse, camera);
+  // إذا النقرة داخل شاشة الكمبيوتر (iframe) نتركها للـ iframe
+  if (isClickInsidePCScreen(e)) return;
 
+  setMouseFromEvent(e);
+
+  // Social click (يعمل حتى أثناء pcMode)
+  if (socialRoots.length) {
+    const sHits = raycaster.intersectObjects(socialRoots, true);
+    if (sHits.length) {
+      let curS = sHits[0].object;
+      while (curS) {
+        if (SOCIAL_LINKS[curS.name]) {
+          window.open(SOCIAL_LINKS[curS.name], '_blank', 'noopener,noreferrer');
+          return;
+        }
+        curS = curS.parent;
+      }
+    }
+  }
+
+  // إذا نحن داخل pcMode: لا نعيد فتح الكمبيوتر مرة ثانية
+  if (pcMode) return;
+
+  // PC click
   const hits = raycaster.intersectObject(studio, true);
   if (!hits.length) return;
 
@@ -448,8 +595,6 @@ window.addEventListener('click', (e) => {
 // =====================
 // Animate
 // =====================
-const _tmp = new THREE.Vector3();
-
 function animate() {
   requestAnimationFrame(animate);
 
@@ -458,18 +603,14 @@ function animate() {
     introTime += 1 / 60;
     const p = Math.min(introTime / INTRO_DURATION, 1);
 
-    // easing للحركة (سينمائي)
     const aPos = easeOutCubic(p);
     const aScale = easeInOutCubic(p);
 
-    // scale من العدم إلى 1
     const s = START_SCALE + (1 - START_SCALE) * aScale;
     world.scale.setScalar(s);
 
-    // الكاميرا تنتقل إلى HOME_CAM
     camera.position.lerpVectors(START_CAM, HOME_CAM, aPos);
 
-    // ✅ دوران سينمائي: speed يتغير تدريجياً
     controls.autoRotateSpeed = INTRO_ROTATE_MIN + (INTRO_ROTATE_MAX - INTRO_ROTATE_MIN) * aPos;
     controls.update();
 
@@ -481,7 +622,6 @@ function animate() {
       controls.target.copy(HOME_TARGET);
       controls.update();
 
-      // ✅ بعد انتهاء الانترو: خلي دوران خفيف مستمر
       controls.autoRotate = true;
       controls.autoRotateSpeed = IDLE_ROTATE_SPEED;
       controls.enabled = true;
@@ -489,7 +629,7 @@ function animate() {
     }
   }
 
-  // Zoom move to PC
+  // Move animation (zoom)
   if (moving) {
     moveT += 0.04;
     const a = Math.min(moveT, 1);
@@ -502,11 +642,12 @@ function animate() {
       camera.position.copy(camTo);
       controls.target.copy(tarTo);
       controls.update();
+
       if (!pcMode) controls.enabled = true;
     }
   }
 
-  // Idle rotate after intro (إذا ليس PC ولا moving ولا intro)
+  // Idle rotate
   if (idleRotate && !pcMode && !moving && !introPlaying) {
     controls.autoRotate = true;
     controls.autoRotateSpeed = IDLE_ROTATE_SPEED;

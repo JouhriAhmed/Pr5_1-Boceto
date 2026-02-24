@@ -11,7 +11,7 @@ cvBtn.addEventListener('click', () => {
 
 // فتح موقع
 siteBtn.addEventListener('click', () => {
-  window.open('https://example.com', '_blank');
+  window.open('https://ahmedjouhri.com', '_blank');
 });
 
 // مشاريع
