@@ -21,16 +21,21 @@ const OFFSET_Z = -0.07;
 // SOCIAL LINKS + HOVER STYLE
 // =====================
 const SOCIAL_LINKS = {
-  Instagram: 'https://www.instagram.com/jouhri.1/',
-  Linkedin: 'https://ma.linkedin.com/in/ahmed-jouhri-27427a250', // ✅ تأكد من الاسم مثل Blender
-  whatsapp: 'https://wa.me/+346772277197' // مثال: 2126xxxxxx بدون +
+  Instagram: 'https://www.instagram.com/USERNAME',
+  Linkedin: 'https://www.linkedin.com/in/USERNAME',
+  whatsapp: 'https://wa.me/XXXXXXXXXXX'
 };
 
 const SOCIAL_HOVER = {
   color: 0xffffff,
   emissive: 0xffffff,
-  emissiveIntensity: 0.2
+  emissiveIntensity: 1.2
 };
+
+// =====================
+// DEVICE CAMERA (REAL WEBCAM)
+// =====================
+const DEVICE_CAMERA_OBJ_NAME = 'Camera';
 
 // =====================
 // ✅✅ ANIMATION SETTINGS
@@ -76,7 +81,6 @@ cssRenderer.setSize(window.innerWidth, window.innerHeight);
 cssRenderer.domElement.style.position = 'absolute';
 cssRenderer.domElement.style.inset = '0';
 cssRenderer.domElement.style.zIndex = '1';
-// ✅ مهم: لا تلتقط الماوس أبداً على مستوى الـ CSS3D كله
 cssRenderer.domElement.style.pointerEvents = 'none';
 document.body.appendChild(cssRenderer.domElement);
 
@@ -102,7 +106,6 @@ controls.update();
 const overlay = document.getElementById('introOverlay');
 const enterBtn = document.getElementById('enterBtn');
 
-// ✅ ضمان أن overlay فوق كل شيء وقابل للنقر
 if (overlay) {
   overlay.style.position = 'fixed';
   overlay.style.inset = '0';
@@ -116,7 +119,7 @@ if (overlay && enterBtn) {
 }
 
 // =====================
-// Intro animation state
+// Intro state
 // =====================
 let introPlaying = false;
 let introTime = 0;
@@ -168,16 +171,21 @@ let screenCSS = null;
 let pcMode = false;
 
 // PC glow
-let pcObject = null; // Ordenador
+let pcObject = null;
 let pcGlow = null;
 let hoverPC = false;
+
+// Camera glow
+let deviceCamObj = null;
+let camGlow = null;
+let hoverCam = false;
 
 // Social
 let socialRoots = [];
 let socialHoverName = null;
 const socialMatBackup = new Map();
 
-// PC Screen DOM ref (عشان نعرف هل النقرة داخل الشاشة)
+// PC Screen DOM
 let pcDiv = null;
 
 // =====================
@@ -223,8 +231,6 @@ function createPCScreen() {
   div.style.borderRadius = '12px';
   div.style.overflow = 'hidden';
   div.style.boxSizing = 'border-box';
-
-  // ✅ فقط هذا العنصر يلتقط الماوس (وليس الـ cssRenderer كله)
   div.style.pointerEvents = 'auto';
 
   const iframe = document.createElement('iframe');
@@ -244,7 +250,7 @@ function createPCScreen() {
 }
 
 // =====================
-// PC Glow mesh
+// Glow mesh
 // =====================
 function makeGlowFromMesh(meshOrGroup) {
   let baseMesh = null;
@@ -310,7 +316,6 @@ function applySocialHoverToObject(obj, isOn) {
           mat.emissiveIntensity = saved.emissiveIntensity;
         }
       }
-
       mat.needsUpdate = true;
     });
   });
@@ -353,13 +358,17 @@ function enterPCMode() {
   pcMode = true;
   if (screenCSS) screenCSS.visible = true;
 
+  cssRenderer.domElement.style.pointerEvents = 'auto';
+
   controls.enabled = false;
   controls.autoRotate = false;
   idleRotate = false;
 
-  // ✅ لا لمعة للكمبيوتر أثناء pcMode
   hoverPC = false;
   if (pcGlow) pcGlow.visible = false;
+
+  hoverCam = false;
+  if (camGlow) camGlow.visible = false;
 
   document.body.style.cursor = 'default';
 }
@@ -367,6 +376,8 @@ function enterPCMode() {
 function exitPCMode() {
   pcMode = false;
   if (screenCSS) screenCSS.visible = false;
+
+  cssRenderer.domElement.style.pointerEvents = 'none';
 
   startMove(savedCamPos, savedTarget, false);
 
@@ -391,15 +402,512 @@ window.addEventListener('message', (event) => {
 });
 
 // =====================
-// Hover (mousemove) — PC glow + Social
+// DEVICE CAMERA (Virtual Backgrounds + Captures strip)
+// =====================
+let deviceCamOpen = false;
+let camStream = null;
+let camOverlayEl = null;
+let camVideoEl = null;
+let camCanvasEl = null;
+let camCanvasCtx = null;
+let camImgEl = null;
+
+// MediaPipe SelfieSegmentation
+let selfieSegmentation = null;
+let segRunning = false;
+let segRafId = 0;
+
+// ---- Virtual backgrounds list (PUT YOUR FILES IN /assets/) ----
+const VBG_LIST = [
+  { name: 'Fondo 1', url: new URL('./assets/bg1.jpg', window.location.href).toString() },
+  { name: 'Fondo 2', url: new URL('./assets/bg2.webp', window.location.href).toString() },
+  { name: 'Fondo 3', url: new URL('./assets/bg3.avif', window.location.href).toString() },
+  { name: 'Fondo 4', url: new URL('./assets/bg4.avif', window.location.href).toString() },
+];
+
+let vbgIndex = 0;
+const vbgImgs = VBG_LIST.map((b) => {
+  const img = new Image();
+  img.crossOrigin = 'anonymous';
+  img.src = b.url;
+  return img;
+});
+function vbgReady(i) {
+  const img = vbgImgs[i];
+  return img && img.complete && (img.naturalWidth > 0);
+}
+
+// ---- Captures strip ----
+let shotsBarEl = null;
+// ===== Gallery mode helpers =====
+let galleryBackBtnEl = null;
+let camActionsRowEl = null;   // row: Capturar / Repetir
+let camBgRowEl = null;        // row: Fondos buttons
+
+function setGalleryMode(on) {
+  if (!camCanvasEl || !camImgEl || !camActionsRowEl || !camBgRowEl || !galleryBackBtnEl) return;
+
+  if (on) {
+    // Gallery view
+    camImgEl.style.display = 'block';
+    camCanvasEl.style.display = 'none';
+
+    // hide actions & bg selector
+    camActionsRowEl.style.display = 'none';
+    camBgRowEl.style.display = 'none';
+
+    // show back button
+    galleryBackBtnEl.style.display = 'inline-flex';
+  } else {
+    // Camera view
+    camImgEl.style.display = 'none';
+    camCanvasEl.style.display = 'block';
+
+    camActionsRowEl.style.display = 'flex';
+    camBgRowEl.style.display = 'flex';
+
+    galleryBackBtnEl.style.display = 'none';
+  }
+}
+
+function openGalleryImage(dataUrl) {
+  if (!camImgEl) return;
+  camImgEl.src = dataUrl;
+  setGalleryMode(true);
+}
+
+function addShotThumbnail(dataUrl) {
+  if (!shotsBarEl) return;
+
+  const thumb = document.createElement('img');
+  thumb.src = dataUrl;
+  thumb.style.width = '110px';
+  thumb.style.height = '70px';
+  thumb.style.objectFit = 'cover';
+  thumb.style.borderRadius = '10px';
+  thumb.style.border = '1px solid rgba(255,255,255,.25)';
+  thumb.style.cursor = 'pointer';
+
+  // ✅ Clicking thumbnail opens gallery view
+  thumb.addEventListener('click', () => openGalleryImage(dataUrl));
+
+  shotsBarEl.prepend(thumb);
+}
+
+function initSelfieSegmentation() {
+  if (selfieSegmentation) return;
+
+  if (!window.SelfieSegmentation) {
+    console.error('❌ SelfieSegmentation no está disponible. Revisa el script del CDN en index.html.');
+    return;
+  }
+
+  selfieSegmentation = new window.SelfieSegmentation({
+    locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/${file}`,
+  });
+
+  selfieSegmentation.setOptions({
+    modelSelection: 1, // 0 más rápido / 1 más preciso
+  });
+
+  selfieSegmentation.onResults((results) => {
+    if (!camCanvasEl || !camCanvasCtx) return;
+
+    const w = results.image.width;
+    const h = results.image.height;
+
+    if (camCanvasEl.width !== w) camCanvasEl.width = w;
+    if (camCanvasEl.height !== h) camCanvasEl.height = h;
+
+    const ctx = camCanvasCtx;
+    ctx.save();
+    ctx.clearRect(0, 0, w, h);
+
+    // 1) mask
+    ctx.drawImage(results.segmentationMask, 0, 0, w, h);
+
+    // 2) person only
+    ctx.globalCompositeOperation = 'source-in';
+    ctx.drawImage(results.image, 0, 0, w, h);
+
+    // 3) background behind person
+    ctx.globalCompositeOperation = 'destination-over';
+
+    if (vbgReady(vbgIndex)) {
+      const bg = vbgImgs[vbgIndex];
+      const imgW = bg.naturalWidth || w;
+      const imgH = bg.naturalHeight || h;
+
+      // cover
+      const scale = Math.max(w / imgW, h / imgH);
+      const drawW = imgW * scale;
+      const drawH = imgH * scale;
+      const dx = (w - drawW) / 2;
+      const dy = (h - drawH) / 2;
+
+      ctx.drawImage(bg, dx, dy, drawW, drawH);
+    } else {
+      // fallback green
+      ctx.fillStyle = '#00FF00';
+      ctx.fillRect(0, 0, w, h);
+    }
+
+    ctx.restore();
+    ctx.globalCompositeOperation = 'source-over';
+  });
+}
+
+async function startSegmentationLoop() {
+  if (!selfieSegmentation || !camVideoEl) return;
+  segRunning = true;
+
+  const tick = async () => {
+    if (!segRunning) return;
+
+    try {
+      if (camVideoEl.readyState >= 2) {
+        await selfieSegmentation.send({ image: camVideoEl });
+      }
+    } catch (e) {
+      console.error('Segmentation error:', e);
+    }
+
+    segRafId = requestAnimationFrame(tick);
+  };
+
+  tick();
+}
+
+function stopSegmentationLoop() {
+  segRunning = false;
+  if (segRafId) cancelAnimationFrame(segRafId);
+  segRafId = 0;
+}
+
+function ensureDeviceCamOverlay() {
+  if (camOverlayEl) return;
+
+  const wrap = document.createElement('div');
+  wrap.style.position = 'fixed';
+  wrap.style.inset = '0';
+  wrap.style.zIndex = '10000';
+  wrap.style.display = 'none';
+  wrap.style.placeItems = 'center';
+  wrap.style.background = 'rgba(0,0,0,0.65)';
+  wrap.style.pointerEvents = 'auto';
+  wrap.style.padding = '20px';
+
+  const panel = document.createElement('div');
+  panel.style.width = 'min(900px, 95vw)';
+  panel.style.borderRadius = '18px';
+  panel.style.overflow = 'hidden';
+  panel.style.background = 'rgba(255,255,255,0.08)';
+  panel.style.border = '1px solid rgba(255,255,255,0.18)';
+  panel.style.backdropFilter = 'blur(10px)';
+  panel.style.boxShadow = '0 18px 60px rgba(0,0,0,.35)';
+
+  const top = document.createElement('div');
+  top.style.display = 'flex';
+  top.style.alignItems = 'center';
+  top.style.justifyContent = 'space-between';
+  top.style.padding = '12px 14px';
+  top.style.color = '#fff';
+  top.style.background = 'rgba(10, 20, 60, .65)';
+
+  const title = document.createElement('div');
+  title.textContent = 'Cámara del dispositivo';
+  title.style.fontWeight = '700';
+
+  const close = document.createElement('button');
+  close.textContent = '✕';
+  close.style.width = '38px';
+  close.style.height = '32px';
+  close.style.border = 'none';
+  close.style.borderRadius = '10px';
+  close.style.background = '#ff4d4d';
+  close.style.color = '#fff';
+  close.style.cursor = 'pointer';
+
+  top.appendChild(title);
+  top.appendChild(close);
+
+  // ✅ Back button (only visible in gallery mode)
+const backBtn = document.createElement('button');
+backBtn.textContent = '← Volver a cámara';
+backBtn.style.display = 'none';
+backBtn.style.alignItems = 'center';
+backBtn.style.gap = '8px';
+backBtn.style.padding = '8px 12px';
+backBtn.style.borderRadius = '12px';
+backBtn.style.border = '1px solid rgba(255,255,255,.25)';
+backBtn.style.background = 'rgba(255,255,255,.12)';
+backBtn.style.color = '#fff';
+backBtn.style.cursor = 'pointer';
+
+top.insertBefore(backBtn, close);
+galleryBackBtnEl = backBtn;
+
+backBtn.addEventListener('click', () => {
+  setGalleryMode(false);
+});
+
+  const content = document.createElement('div');
+  content.style.padding = '14px';
+  content.style.display = 'grid';
+  content.style.gap = '12px';
+
+  // video hidden (input)
+  const video = document.createElement('video');
+  video.autoplay = true;
+  video.playsInline = true;
+  video.muted = true;
+  video.style.display = 'none';
+
+  // canvas shown (output)
+  const canvas = document.createElement('canvas');
+  canvas.style.width = '100%';
+  canvas.style.borderRadius = '14px';
+  canvas.style.background = '#000';
+  canvas.style.display = 'block';
+
+  // captured big image (small area)
+  const img = document.createElement('img');
+img.style.width = '100%';
+img.style.borderRadius = '14px';
+img.style.display = 'none';
+
+// ✅ Show full image (no crop)
+img.style.objectFit = 'contain';
+img.style.background = '#000';
+
+// ✅ Large preview height
+img.style.maxHeight = 'calc(90vh - 170px)';
+img.style.height = 'auto';
+
+  // background selector row
+  const bgRow = document.createElement('div');
+  camBgRowEl = bgRow;
+  bgRow.style.display = 'flex';
+  bgRow.style.gap = '8px';
+  bgRow.style.flexWrap = 'wrap';
+
+  const bgLabel = document.createElement('div');
+  bgLabel.textContent = 'Fondos:';
+  bgLabel.style.color = 'rgba(255,255,255,.85)';
+  bgLabel.style.fontFamily = 'Arial';
+  bgLabel.style.fontSize = '13px';
+  bgLabel.style.marginRight = '6px';
+  bgLabel.style.alignSelf = 'center';
+  bgRow.appendChild(bgLabel);
+
+  const bgBtns = [];
+  function updateBgButtonsUI() {
+    bgBtns.forEach((b, i) => {
+      b.style.outline = (i === vbgIndex) ? '2px solid rgba(255,255,255,.9)' : 'none';
+      b.style.background = (i === vbgIndex) ? 'rgba(255,255,255,.20)' : 'rgba(255,255,255,.12)';
+    });
+  }
+
+  VBG_LIST.forEach((bg, i) => {
+    const b = document.createElement('button');
+    b.textContent = bg.name;
+    b.style.padding = '10px 12px';
+    b.style.borderRadius = '12px';
+    b.style.border = '1px solid rgba(255,255,255,.25)';
+    b.style.background = 'rgba(255,255,255,.12)';
+    b.style.color = '#fff';
+    b.style.cursor = 'pointer';
+    b.addEventListener('click', () => {
+      vbgIndex = i;
+      updateBgButtonsUI();
+    });
+    bgBtns.push(b);
+    bgRow.appendChild(b);
+  });
+  updateBgButtonsUI();
+
+  // action buttons
+  const row = document.createElement('div');
+  camActionsRowEl = row;
+  row.style.display = 'flex';
+  row.style.gap = '10px';
+  row.style.flexWrap = 'wrap';
+
+  const snap = document.createElement('button');
+  snap.textContent = '📸 Capturar';
+  snap.style.flex = '1';
+  snap.style.minWidth = '160px';
+  snap.style.padding = '12px 14px';
+  snap.style.borderRadius = '14px';
+  snap.style.border = '1px solid rgba(255,255,255,.25)';
+  snap.style.background = 'rgba(255,255,255,.12)';
+  snap.style.color = '#fff';
+  snap.style.cursor = 'pointer';
+
+  const retake = document.createElement('button');
+  retake.textContent = '🔄 Repetir';
+  retake.style.flex = '1';
+  retake.style.minWidth = '160px';
+  retake.style.padding = '12px 14px';
+  retake.style.borderRadius = '14px';
+  retake.style.border = '1px solid rgba(255,255,255,.25)';
+  retake.style.background = 'rgba(255,255,255,.12)';
+  retake.style.color = '#fff';
+  retake.style.cursor = 'pointer';
+
+  row.appendChild(snap);
+  row.appendChild(retake);
+
+  // captures strip
+  const shotsWrap = document.createElement('div');
+  shotsWrap.style.display = 'grid';
+  shotsWrap.style.gap = '10px';
+
+  const shotsTitle = document.createElement('div');
+  shotsTitle.textContent = 'Capturas';
+  shotsTitle.style.color = 'rgba(255,255,255,.85)';
+  shotsTitle.style.fontFamily = 'Arial';
+  shotsTitle.style.fontSize = '13px';
+
+  const shotsBar = document.createElement('div');
+  shotsBar.style.display = 'flex';
+  shotsBar.style.gap = '8px';
+  shotsBar.style.overflowX = 'auto';
+  shotsBar.style.paddingBottom = '6px';
+
+  shotsWrap.appendChild(shotsTitle);
+  shotsWrap.appendChild(shotsBar);
+
+  const hint = document.createElement('div');
+  hint.style.color = 'rgba(255,255,255,.85)';
+  hint.style.fontFamily = 'Arial';
+  hint.style.fontSize = '13px';
+
+  content.appendChild(video);
+  content.appendChild(canvas);
+  content.appendChild(bgRow);
+  content.appendChild(row);
+  content.appendChild(shotsWrap);
+  content.appendChild(img);
+  content.appendChild(hint);
+
+  panel.appendChild(top);
+  panel.appendChild(content);
+  wrap.appendChild(panel);
+  document.body.appendChild(wrap);
+
+  camOverlayEl = wrap;
+  camVideoEl = video;
+  camCanvasEl = canvas;
+  camCanvasCtx = canvas.getContext('2d', { willReadFrequently: false });
+  camImgEl = img;
+
+  shotsBarEl = shotsBar;
+
+  close.addEventListener('click', closeDeviceCamera);
+  wrap.addEventListener('click', (e) => {
+    if (e.target === wrap) closeDeviceCamera();
+  });
+
+  // capture from canvas (segmented output)
+  snap.addEventListener('click', () => {
+    if (!camCanvasEl) return;
+
+    const dataUrl = camCanvasEl.toDataURL('image/png');
+
+    // show in small preview
+    camImgEl.src = dataUrl;
+    camImgEl.style.display = 'block';
+    camCanvasEl.style.display = 'none';
+
+    // add thumbnail
+    addShotThumbnail(dataUrl);
+  });
+
+  retake.addEventListener('click', () => {
+    camImgEl.style.display = 'none';
+    camCanvasEl.style.display = 'block';
+  });
+}
+
+async function openDeviceCamera() {
+  ensureDeviceCamOverlay();
+
+  if (pcMode) exitPCMode();
+
+  deviceCamOpen = true;
+
+  controls.enabled = false;
+  controls.autoRotate = false;
+  idleRotate = false;
+
+  hoverPC = false;
+  if (pcGlow) pcGlow.visible = false;
+
+  hoverCam = false;
+  if (camGlow) camGlow.visible = false;
+
+  camOverlayEl.style.display = 'grid';
+  camImgEl.style.display = 'none';
+  camCanvasEl.style.display = 'block';
+  setGalleryMode(false);
+
+  try {
+    camStream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: 'user' },
+      audio: false
+    });
+
+    camVideoEl.srcObject = camStream;
+
+    initSelfieSegmentation();
+    await camVideoEl.play();
+
+    stopSegmentationLoop();
+    startSegmentationLoop();
+  } catch (err) {
+    console.error('getUserMedia error:', err);
+    alert('No se pudo abrir la cámara. Verifica permisos y usa localhost/https.');
+    closeDeviceCamera();
+  }
+}
+
+function closeDeviceCamera() {
+  deviceCamOpen = false;
+
+  stopSegmentationLoop();
+
+  if (camOverlayEl) camOverlayEl.style.display = 'none';
+
+  if (camStream) {
+    camStream.getTracks().forEach(t => t.stop());
+    camStream = null;
+  }
+  if (camVideoEl) camVideoEl.srcObject = null;
+
+  if (!introPlaying && !moving) {
+    controls.enabled = true;
+    controls.autoRotate = true;
+    controls.autoRotateSpeed = IDLE_ROTATE_SPEED;
+    idleRotate = true;
+  }
+}
+
+window.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && deviceCamOpen) closeDeviceCamera();
+});
+
+// =====================
+// Hover (mousemove) — PC glow + Camera glow + Social
 // =====================
 window.addEventListener('mousemove', (e) => {
   if (!studio) return;
   if (introPlaying) return;
+  if (deviceCamOpen) return;
 
   setMouseFromEvent(e);
 
-  // ---- PC hover (لكن لا تعمل أثناء pcMode)
+  // PC hover
   if (!pcMode && pcObject) {
     const hitsPC = raycaster.intersectObject(pcObject, true);
     const nowHoverPC = hitsPC.length > 0;
@@ -407,15 +915,27 @@ window.addEventListener('mousemove', (e) => {
     if (nowHoverPC !== hoverPC) {
       hoverPC = nowHoverPC;
       if (pcGlow) pcGlow.visible = hoverPC;
-      document.body.style.cursor = hoverPC ? 'pointer' : 'default';
     }
   } else {
-    // أثناء pcMode تأكد أنها مطفأة
     hoverPC = false;
     if (pcGlow) pcGlow.visible = false;
   }
 
-  // ---- Social hover (يعمل حتى أثناء pcMode)
+  // Camera hover
+  if (!pcMode && deviceCamObj) {
+    const hitsCam = raycaster.intersectObject(deviceCamObj, true);
+    const nowHoverCam = hitsCam.length > 0;
+
+    if (nowHoverCam !== hoverCam) {
+      hoverCam = nowHoverCam;
+      if (camGlow) camGlow.visible = hoverCam;
+    }
+  } else {
+    hoverCam = false;
+    if (camGlow) camGlow.visible = false;
+  }
+
+  // Social hover (works even in pcMode)
   if (socialRoots.length) {
     const socialHits = raycaster.intersectObjects(socialRoots, true);
 
@@ -443,10 +963,14 @@ window.addEventListener('mousemove', (e) => {
         const newObj = studio.getObjectByName(socialHoverName);
         applySocialHoverToObject(newObj, true);
       }
-
-      // Cursor: لا نخرب كيرسر الكمبيوتر
-      if (!hoverPC) document.body.style.cursor = socialHoverName ? 'pointer' : 'default';
     }
+  }
+
+  // Cursor
+  if (hoverPC || hoverCam || socialHoverName) {
+    document.body.style.cursor = 'pointer';
+  } else {
+    document.body.style.cursor = 'default';
   }
 });
 
@@ -461,17 +985,26 @@ new GLTFLoader().load(
 
     pcScreen = studio.getObjectByName('PC_SCREEN');
     pcObject = studio.getObjectByName('Ordenador');
+    deviceCamObj = studio.getObjectByName(DEVICE_CAMERA_OBJ_NAME);
 
     if (pcObject) {
       pcGlow = makeGlowFromMesh(pcObject);
-      console.log('✅ PC Glow created');
+      console.log('✅ Brillo (hover) del ordenador creado.');
     } else {
-      console.warn('⚠️ لم أجد Ordenador. تأكد من الاسم في Blender.');
+      console.warn('⚠️ No se encontró el objeto "Ordenador". Revisa el nombre en Blender.');
     }
 
     if (!pcScreen) {
-      console.error('PC_SCREEN غير موجود. تأكد من الاسم في Blender.');
+      console.error('❌ No se encontró "PC_SCREEN". Revisa el nombre en Blender.');
       return;
+    }
+
+    if (deviceCamObj) {
+      camGlow = makeGlowFromMesh(deviceCamObj);
+      console.log(`✅ Objeto de cámara encontrado: ${DEVICE_CAMERA_OBJ_NAME}`);
+      console.log('✅ Brillo (hover) de la cámara creado.');
+    } else {
+      console.warn(`⚠️ No se encontró el objeto de cámara: ${DEVICE_CAMERA_OBJ_NAME}`);
     }
 
     // Social objects
@@ -479,7 +1012,7 @@ new GLTFLoader().load(
     Object.keys(SOCIAL_LINKS).forEach((name) => {
       const obj = studio.getObjectByName(name);
       if (!obj) {
-        console.warn(`⚠️ لم أجد عنصر Social باسم: ${name}`);
+        console.warn(`⚠️ No se encontró el objeto social: ${name}`);
         return;
       }
       socialRoots.push(obj);
@@ -490,7 +1023,6 @@ new GLTFLoader().load(
         mats.forEach((mat) => cacheMaterial(mat));
       });
     });
-    console.log('✅ Social roots:', socialRoots.map(o => o.name));
 
     screenCSS = createPCScreen();
     scene.add(screenCSS);
@@ -530,19 +1062,28 @@ function isClickInsidePCScreen(e) {
 }
 
 // =====================
-// Click -> Social link OR PC zoom / open UI
+// Click -> Device Camera OR Social OR PC
 // =====================
 window.addEventListener('click', (e) => {
   if (!studio || !pcScreen) return;
   if (moving) return;
   if (introPlaying) return;
+  if (deviceCamOpen) return;
 
-  // إذا النقرة داخل شاشة الكمبيوتر (iframe) نتركها للـ iframe
   if (isClickInsidePCScreen(e)) return;
 
   setMouseFromEvent(e);
 
-  // Social click (يعمل حتى أثناء pcMode)
+  // 1) Device Camera click
+  if (deviceCamObj) {
+    const camHits = raycaster.intersectObject(deviceCamObj, true);
+    if (camHits.length) {
+      openDeviceCamera();
+      return;
+    }
+  }
+
+  // 2) Social click (works even in pcMode)
   if (socialRoots.length) {
     const sHits = raycaster.intersectObjects(socialRoots, true);
     if (sHits.length) {
@@ -557,10 +1098,9 @@ window.addEventListener('click', (e) => {
     }
   }
 
-  // إذا نحن داخل pcMode: لا نعيد فتح الكمبيوتر مرة ثانية
   if (pcMode) return;
 
-  // PC click
+  // 3) PC click
   const hits = raycaster.intersectObject(studio, true);
   if (!hits.length) return;
 
@@ -606,9 +1146,7 @@ function animate() {
     const aPos = easeOutCubic(p);
     const aScale = easeInOutCubic(p);
 
-    const s = START_SCALE + (1 - START_SCALE) * aScale;
-    world.scale.setScalar(s);
-
+    world.scale.setScalar(START_SCALE + (1 - START_SCALE) * aScale);
     camera.position.lerpVectors(START_CAM, HOME_CAM, aPos);
 
     controls.autoRotateSpeed = INTRO_ROTATE_MIN + (INTRO_ROTATE_MAX - INTRO_ROTATE_MIN) * aPos;
@@ -629,7 +1167,7 @@ function animate() {
     }
   }
 
-  // Move animation (zoom)
+  // Move animation
   if (moving) {
     moveT += 0.04;
     const a = Math.min(moveT, 1);
@@ -643,16 +1181,16 @@ function animate() {
       controls.target.copy(tarTo);
       controls.update();
 
-      if (!pcMode) controls.enabled = true;
+      if (!pcMode && !deviceCamOpen) controls.enabled = true;
     }
   }
 
   // Idle rotate
-  if (idleRotate && !pcMode && !moving && !introPlaying) {
+  if (idleRotate && !pcMode && !moving && !introPlaying && !deviceCamOpen) {
     controls.autoRotate = true;
     controls.autoRotateSpeed = IDLE_ROTATE_SPEED;
     controls.update();
-  } else if (!pcMode && !moving && !introPlaying && !idleRotate) {
+  } else if (!pcMode && !moving && !introPlaying && !idleRotate && !deviceCamOpen) {
     controls.update();
   }
 
