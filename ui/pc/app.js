@@ -16,7 +16,7 @@ siteBtn.addEventListener('click', () => {
 
 // مشاريع
 projBtn.addEventListener('click', () => {
-  alert('سنضيف المشاريع لاحقاً.');
+  alert('Añadiremos los proyectos próximamente.');
 });
 
 // زر الإغلاق: يخرج من PC mode مباشرة

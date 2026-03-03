@@ -4,8 +4,7 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { CSS3DRenderer, CSS3DObject } from 'three/addons/renderers/CSS3DRenderer.js';
 
 const MODEL_PATH = './models/Studio.glb';
-const BG_COLOR = 0x87CEEB;
-
+const BG_COLOR = 0x000000;
 const IFRAME_W = 1024;
 const IFRAME_H = 640;
 
@@ -192,6 +191,8 @@ let pcDiv = null;
 // Smooth camera move
 // =====================
 let moving = false;
+// ✅ open device camera after zoom finishes
+let pendingOpenDeviceCam = false;
 let moveT = 0;
 const camFrom = new THREE.Vector3();
 const tarFrom = new THREE.Vector3();
@@ -417,8 +418,10 @@ let selfieSegmentation = null;
 let segRunning = false;
 let segRafId = 0;
 
-// ---- Virtual backgrounds list (PUT YOUR FILES IN /assets/) ----
+// ✅✅✅ Virtual backgrounds list (Fondo 0 first)
+// Fondo 0 = GREEN (no image url)
 const VBG_LIST = [
+  { name: 'Fondo 0', url: null }, // ✅ nuevo (verde)
   { name: 'Fondo 1', url: new URL('./assets/bg1.jpg', window.location.href).toString() },
   { name: 'Fondo 2', url: new URL('./assets/bg2.webp', window.location.href).toString() },
   { name: 'Fondo 3', url: new URL('./assets/bg3.avif', window.location.href).toString() },
@@ -426,13 +429,19 @@ const VBG_LIST = [
 ];
 
 let vbgIndex = 0;
+
+// ✅ لا نحمل Image لـ Fondo 0 لأنه ليس ملف
 const vbgImgs = VBG_LIST.map((b) => {
+  if (!b.url) return null;
   const img = new Image();
   img.crossOrigin = 'anonymous';
   img.src = b.url;
   return img;
 });
+
 function vbgReady(i) {
+  // Fondo 0 always ready
+  if (i === 0) return true;
   const img = vbgImgs[i];
   return img && img.complete && (img.naturalWidth > 0);
 }
@@ -448,24 +457,16 @@ function setGalleryMode(on) {
   if (!camCanvasEl || !camImgEl || !camActionsRowEl || !camBgRowEl || !galleryBackBtnEl) return;
 
   if (on) {
-    // Gallery view
     camImgEl.style.display = 'block';
     camCanvasEl.style.display = 'none';
-
-    // hide actions & bg selector
     camActionsRowEl.style.display = 'none';
     camBgRowEl.style.display = 'none';
-
-    // show back button
     galleryBackBtnEl.style.display = 'inline-flex';
   } else {
-    // Camera view
     camImgEl.style.display = 'none';
     camCanvasEl.style.display = 'block';
-
     camActionsRowEl.style.display = 'flex';
     camBgRowEl.style.display = 'flex';
-
     galleryBackBtnEl.style.display = 'none';
   }
 }
@@ -488,7 +489,6 @@ function addShotThumbnail(dataUrl) {
   thumb.style.border = '1px solid rgba(255,255,255,.25)';
   thumb.style.cursor = 'pointer';
 
-  // ✅ Clicking thumbnail opens gallery view
   thumb.addEventListener('click', () => openGalleryImage(dataUrl));
 
   shotsBarEl.prepend(thumb);
@@ -507,7 +507,7 @@ function initSelfieSegmentation() {
   });
 
   selfieSegmentation.setOptions({
-    modelSelection: 1, // 0 más rápido / 1 más preciso
+    modelSelection: 1,
   });
 
   selfieSegmentation.onResults((results) => {
@@ -533,7 +533,11 @@ function initSelfieSegmentation() {
     // 3) background behind person
     ctx.globalCompositeOperation = 'destination-over';
 
-    if (vbgReady(vbgIndex)) {
+    // ✅ Fondo 0 = GREEN
+    if (vbgIndex === 0) {
+      ctx.fillStyle = '#00FF00';
+      ctx.fillRect(0, 0, w, h);
+    } else if (vbgReady(vbgIndex)) {
       const bg = vbgImgs[vbgIndex];
       const imgW = bg.naturalWidth || w;
       const imgH = bg.naturalHeight || h;
@@ -631,60 +635,51 @@ function ensureDeviceCamOverlay() {
   top.appendChild(title);
   top.appendChild(close);
 
-  // ✅ Back button (only visible in gallery mode)
-const backBtn = document.createElement('button');
-backBtn.textContent = '← Volver a cámara';
-backBtn.style.display = 'none';
-backBtn.style.alignItems = 'center';
-backBtn.style.gap = '8px';
-backBtn.style.padding = '8px 12px';
-backBtn.style.borderRadius = '12px';
-backBtn.style.border = '1px solid rgba(255,255,255,.25)';
-backBtn.style.background = 'rgba(255,255,255,.12)';
-backBtn.style.color = '#fff';
-backBtn.style.cursor = 'pointer';
+  const backBtn = document.createElement('button');
+  backBtn.textContent = '← Volver a cámara';
+  backBtn.style.display = 'none';
+  backBtn.style.alignItems = 'center';
+  backBtn.style.gap = '8px';
+  backBtn.style.padding = '8px 12px';
+  backBtn.style.borderRadius = '12px';
+  backBtn.style.border = '1px solid rgba(255,255,255,.25)';
+  backBtn.style.background = 'rgba(255,255,255,.12)';
+  backBtn.style.color = '#fff';
+  backBtn.style.cursor = 'pointer';
 
-top.insertBefore(backBtn, close);
-galleryBackBtnEl = backBtn;
+  top.insertBefore(backBtn, close);
+  galleryBackBtnEl = backBtn;
 
-backBtn.addEventListener('click', () => {
-  setGalleryMode(false);
-});
+  backBtn.addEventListener('click', () => {
+    setGalleryMode(false);
+  });
 
   const content = document.createElement('div');
   content.style.padding = '14px';
   content.style.display = 'grid';
   content.style.gap = '12px';
 
-  // video hidden (input)
   const video = document.createElement('video');
   video.autoplay = true;
   video.playsInline = true;
   video.muted = true;
   video.style.display = 'none';
 
-  // canvas shown (output)
   const canvas = document.createElement('canvas');
   canvas.style.width = '100%';
   canvas.style.borderRadius = '14px';
   canvas.style.background = '#000';
   canvas.style.display = 'block';
 
-  // captured big image (small area)
   const img = document.createElement('img');
-img.style.width = '100%';
-img.style.borderRadius = '14px';
-img.style.display = 'none';
+  img.style.width = '100%';
+  img.style.borderRadius = '14px';
+  img.style.display = 'none';
+  img.style.objectFit = 'contain';
+  img.style.background = '#000';
+  img.style.maxHeight = 'calc(90vh - 170px)';
+  img.style.height = 'auto';
 
-// ✅ Show full image (no crop)
-img.style.objectFit = 'contain';
-img.style.background = '#000';
-
-// ✅ Large preview height
-img.style.maxHeight = 'calc(90vh - 170px)';
-img.style.height = 'auto';
-
-  // background selector row
   const bgRow = document.createElement('div');
   camBgRowEl = bgRow;
   bgRow.style.display = 'flex';
@@ -726,7 +721,6 @@ img.style.height = 'auto';
   });
   updateBgButtonsUI();
 
-  // action buttons
   const row = document.createElement('div');
   camActionsRowEl = row;
   row.style.display = 'flex';
@@ -758,7 +752,6 @@ img.style.height = 'auto';
   row.appendChild(snap);
   row.appendChild(retake);
 
-  // captures strip
   const shotsWrap = document.createElement('div');
   shotsWrap.style.display = 'grid';
   shotsWrap.style.gap = '10px';
@@ -809,18 +802,14 @@ img.style.height = 'auto';
     if (e.target === wrap) closeDeviceCamera();
   });
 
-  // capture from canvas (segmented output)
   snap.addEventListener('click', () => {
     if (!camCanvasEl) return;
 
     const dataUrl = camCanvasEl.toDataURL('image/png');
-
-    // show in small preview
     camImgEl.src = dataUrl;
     camImgEl.style.display = 'block';
     camCanvasEl.style.display = 'none';
 
-    // add thumbnail
     addShotThumbnail(dataUrl);
   });
 
@@ -935,7 +924,7 @@ window.addEventListener('mousemove', (e) => {
     if (camGlow) camGlow.visible = false;
   }
 
-  // Social hover (works even in pcMode)
+  // Social hover
   if (socialRoots.length) {
     const socialHits = raycaster.intersectObjects(socialRoots, true);
 
@@ -1074,16 +1063,34 @@ window.addEventListener('click', (e) => {
 
   setMouseFromEvent(e);
 
-  // 1) Device Camera click
+  // 1) Device Camera click (Zoom then open)
   if (deviceCamObj) {
     const camHits = raycaster.intersectObject(deviceCamObj, true);
     if (camHits.length) {
-      openDeviceCamera();
+
+      savedCamPos = camera.position.clone();
+      savedTarget = controls.target.clone();
+
+      const box = new THREE.Box3().setFromObject(deviceCamObj);
+      const center = new THREE.Vector3();
+      const size = new THREE.Vector3();
+      box.getCenter(center);
+      box.getSize(size);
+
+      const q = deviceCamObj.getWorldQuaternion(new THREE.Quaternion());
+      const forward = new THREE.Vector3(0, 0, 1).applyQuaternion(q).normalize();
+
+      const distance = Math.max(size.length() * 1.2, 1.2);
+      const camPosZoom = center.clone().add(forward.multiplyScalar(distance));
+
+      pendingOpenDeviceCam = true;
+
+      startMove(camPosZoom, center, true);
       return;
     }
   }
 
-  // 2) Social click (works even in pcMode)
+  // 2) Social click
   if (socialRoots.length) {
     const sHits = raycaster.intersectObjects(socialRoots, true);
     if (sHits.length) {
@@ -1138,7 +1145,6 @@ window.addEventListener('click', (e) => {
 function animate() {
   requestAnimationFrame(animate);
 
-  // Intro animation
   if (introPlaying) {
     introTime += 1 / 60;
     const p = Math.min(introTime / INTRO_DURATION, 1);
@@ -1167,7 +1173,6 @@ function animate() {
     }
   }
 
-  // Move animation
   if (moving) {
     moveT += 0.04;
     const a = Math.min(moveT, 1);
@@ -1181,11 +1186,16 @@ function animate() {
       controls.target.copy(tarTo);
       controls.update();
 
+      if (pendingOpenDeviceCam) {
+        pendingOpenDeviceCam = false;
+        openDeviceCamera();
+        return;
+      }
+
       if (!pcMode && !deviceCamOpen) controls.enabled = true;
     }
   }
 
-  // Idle rotate
   if (idleRotate && !pcMode && !moving && !introPlaying && !deviceCamOpen) {
     controls.autoRotate = true;
     controls.autoRotateSpeed = IDLE_ROTATE_SPEED;
